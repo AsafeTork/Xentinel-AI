@@ -247,6 +247,7 @@ def build_agent_cards(org_id: str, *, limit: int = 200) -> List[Dict[str, Any]]:
                 {
                     "finding_key": it.get("key") or "",
                     "score": it.get("score"),
+                    "priority_score": float(it.get("impact_data", {}).get("priority_score", 0)),
                     "level": it.get("level"),
                     "confidence": it.get("confidence"),
                     "financial_label": ecommerce.get("severidade_financeira") or "",
@@ -262,6 +263,8 @@ def build_agent_cards(org_id: str, *, limit: int = 200) -> List[Dict[str, Any]]:
                         "reasons": [str(x) for x in rs[:2]],
                     },
                     "action_line": _summ_action_line(it),
+                    "impact_data": it.get("impact_data") or {},
+                    "agent_loop": it.get("action", {}).get("agent_loop", {})
                 }
             )
 

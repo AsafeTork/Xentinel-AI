@@ -53,20 +53,19 @@ def generate_action_block(f: Finding) -> Dict:
     action = {
         "kind": kind,
         "classification": "MANUAL_REQUIRED",
-        "title": "Manual remediation required",
-        "scope": "Application / config change (review required)",
+        "title": "Correção manual necessária no checkout/cadastro",
+        "scope": "Aplicação (requer revisão)",
         "steps": [
-            "Apply the recommended fix in a staging environment first.",
-            "Add a regression test that reproduces the issue and confirms the fix.",
-            "Re-run monitoring to verify the outcome (FIX VERIFIED).",
+            "Aplique a recomendação em ambiente de homologação primeiramente.",
+            "Certifique-se de que o fluxo principal (adicionar ao carrinho, finalizar compra) não foi quebrado.",
         ],
         "snippet_language": "text",
-        "snippet": (f.solution or "").strip() or "No deterministic snippet available for this finding type.",
-        "rollback": "Revert the change via version control and redeploy.",
+        "snippet": (f.solution or "").strip() or "Crie uma task no Jira para a equipe de devs.",
+        "rollback": "Reverta via git e faça um novo deploy.",
         "safety_notes": [
-            "Never apply changes directly in production without a rollback plan.",
-            "Prefer small, scoped diffs and verify with monitoring.",
-        ],
+            "Nunca mude o código da loja sexta-feira à tarde.",
+            "Use o MOCK EXECUTE para validar.",
+        ]
     }
 
     if kind == "headers_hsts":
@@ -233,5 +232,16 @@ def generate_action_block(f: Finding) -> Dict:
                 ],
             }
         )
+
+    action["agent_loop"] = {
+        "detect": f.category or "Análise",
+        "investigate": (f.explanation or action.get("title", "")).strip(),
+        "recommend": action.get("title", action.get("recommendation", "Correção necessária")),
+        "mock_execute": {
+            "language": action.get("snippet_language", "text"),
+            "snippet": action.get("snippet", "Nenhuma automação extraída.")
+        },
+        "impact": "Prevenção de abandono de sessão e perda de confiança."
+    }
 
     return action

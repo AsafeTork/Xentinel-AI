@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Set, Tuple
 from urllib.parse import urlparse
 
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 
 from .. import db
 from ..models import AuditRun, MonitoringFinding, MonitoringJob, MonitoringRun, Organization, Site
@@ -131,13 +133,22 @@ def hash_keys(keys: List[str]) -> str:
 
 
 def ensure_monitor_job(org_id: str, site_id: str) -> MonitoringJob:
+    """Get or create a MonitoringJob. Race-condition safe via retry on IntegrityError."""
     job = MonitoringJob.query.filter_by(org_id=org_id, site_id=site_id).first()
     if job:
         return job
-    job = MonitoringJob(org_id=org_id, site_id=site_id, enabled=False, frequency_s=3600, mode="full")
-    db.session.add(job)
-    db.session.commit()
-    return job
+    try:
+        job = MonitoringJob(org_id=org_id, site_id=site_id, enabled=False, frequency_s=3600, mode="full")
+        db.session.add(job)
+        db.session.commit()
+        return job
+    except IntegrityError:
+        db.session.rollback()
+        # Another worker created it first — just fetch.
+        job = MonitoringJob.query.filter_by(org_id=org_id, site_id=site_id).first()
+        if job:
+            return job
+        raise
 
 
 def enqueue_due_monitoring_runs(limit: int = 50) -> Tuple[int, List[str]]:
@@ -213,13 +224,29 @@ def enqueue_due_monitoring_runs(limit: int = 50) -> Tuple[int, List[str]]:
     return enqueued, audit_ids
 
 
+def _finding_fingerprint(domain: str, key: str) -> str:
+    """Stable fingerprint: hash(domain + finding_key). Prevents duplicate impact inflation."""
+    h = hashlib.sha256()
+    h.update((domain or "").strip().lower().encode("utf-8"))
+    h.update(b"|")
+    h.update((key or "").strip().lower().encode("utf-8"))
+    return h.hexdigest()[:24]
+
+
 def persist_monitoring_history(audit: AuditRun) -> None:
     """
     After an AuditRun completes, persist a MonitoringRun + diff vs previous run.
+    Idempotent: same audit_run_id is never persisted twice.
     """
-    # IMPORTANT (product visibility):
-    # Even manual audits should produce monitoring history so the Agent Control Plane is never empty.
-    # If the audit isn't associated with a MonitoringJob, attach (or create) a per-site job deterministically.
+    _log = logging.getLogger("monitoring.persist")
+
+    # Idempotency guard: never process the same audit twice.
+    existing_run = MonitoringRun.query.filter_by(audit_run_id=audit.id).first()
+    if existing_run:
+        _log.info("Skipping duplicate persist for audit_run_id=%s (already has monitoring_run=%s)", audit.id, existing_run.id)
+        return
+
+    # Get or create the monitoring job (race-condition safe).
     job = None
     if getattr(audit, "monitor_job_id", None):
         job = MonitoringJob.query.filter_by(id=audit.monitor_job_id).first()
@@ -227,12 +254,28 @@ def persist_monitoring_history(audit: AuditRun) -> None:
         try:
             job = ensure_monitor_job(audit.org_id, audit.site_id)
         except Exception:
+            _log.exception("Failed to ensure monitoring job for org=%s site=%s", audit.org_id, audit.site_id)
             return
 
     findings = _canonical_findings_from_audit(audit)
-    cur_keys = sorted(set([str(f.key or "").strip() for f in findings if str(f.key or "").strip()]))
+    # Deduplicate keys using fingerprint (domain + category|failure)
+    domain = (audit.target_domain or "").strip().lower()
+    seen_fps: set[str] = set()
+    deduped_findings: List[Finding] = []
+    deduped_keys: List[str] = []
+    for f in findings:
+        fp = _finding_fingerprint(domain, f.key)
+        if fp in seen_fps:
+            continue
+        seen_fps.add(fp)
+        deduped_findings.append(f)
+        k = str(f.key or "").strip()
+        if k:
+            deduped_keys.append(k)
+    findings = deduped_findings
+    cur_keys = sorted(set(deduped_keys))
+
     if not cur_keys:
-        # Defensive fallback; should not happen because _canonical_findings_from_audit guarantees >=1 finding.
         ff = _fallback_baseline_finding()
         findings = [ff]
         cur_keys = [ff.key]
@@ -290,7 +333,6 @@ def persist_monitoring_history(audit: AuditRun) -> None:
                 kk = str(k or "").strip()
                 if kk:
                     recurrence_map[kk] = recurrence_map.get(kk, 0) + 1
-        # Add current run keys too (if not yet present in DB snapshot).
         for k in cur_keys:
             recurrence_map[k] = recurrence_map.get(k, 0) + 1
     except Exception:
@@ -398,13 +440,16 @@ def persist_monitoring_history(audit: AuditRun) -> None:
             if k:
                 prev_item_map[k] = it
 
-        # Update lifecycle per key in union(prev,cur)
+        # Update lifecycle per key in union(prev,cur) — UPSERT pattern, never blind insert
         for k in changed_keys:
             st = state_map.get(k)
             in_cur = k in cur_set
             in_prev = k in prev_set
 
             if in_cur:
+                if not st:
+                    # Upsert: check DB one more time to avoid duplicate insert from concurrent workers
+                    st = MonitoringFinding.query.filter_by(job_id=job.id, finding_key=k).first()
                 if not st:
                     st = MonitoringFinding(
                         org_id=job.org_id,
@@ -552,7 +597,15 @@ def persist_monitoring_history(audit: AuditRun) -> None:
         except Exception:
             pass
     except Exception:
-        # Keep the simple default verification_json already attached to the run.
-        pass
+        _log.exception("Verification loop failed for audit_run_id=%s — keeping defaults", audit.id)
 
-    db.session.commit()
+    # Single atomic commit for the entire monitoring persist.
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # Another worker persisted this exact run — rollback and discard.
+        db.session.rollback()
+        _log.warning("Duplicate monitoring persist detected for audit_run_id=%s — discarded", audit.id)
+    except Exception:
+        db.session.rollback()
+        _log.exception("Failed to commit monitoring history for audit_run_id=%s", audit.id)

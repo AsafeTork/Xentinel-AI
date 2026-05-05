@@ -119,51 +119,7 @@ def normalize_base_url_v1(base_url_v1: str) -> str:
     return u
 
 
-def parse_usd_range(s: str) -> tuple[int | None, int | None]:
-    """
-    Parse a loose USD estimate string to (low, high).
-    Accepts formats like:
-      - "USD 50.000 - 200.000"
-      - "200000"
-      - "$1,200"
-      - "USD 5.000–20.000/ano" (we ignore "/ano" and parse the numbers)
-    Returns (None, None) if not parseable.
-    """
-    txt = (s or "").strip()
-    if not txt:
-        return None, None
-    # Normalize separators
-    txt = txt.replace("–", "-").replace("—", "-")
-    # Keep only digits, separators and hyphen
-    # Extract up to two numeric blobs
-    nums = re.findall(r"[\d][\d\.,]*", txt)
-    if not nums:
-        return None, None
 
-    def to_int(x: str) -> int | None:
-        x = (x or "").strip()
-        if not x:
-            return None
-        # Remove commas and dots as thousand separators
-        # Heuristic: treat both '.' and ',' as thousand separators.
-        x2 = re.sub(r"[^\d]", "", x)
-        if not x2:
-            return None
-        try:
-            return int(x2)
-        except Exception:
-            return None
-
-    a = to_int(nums[0])
-    b = to_int(nums[1]) if len(nums) > 1 else None
-
-    if a is None and b is None:
-        return None, None
-    if b is None:
-        return a, a
-    lo = min(a or 0, b or 0)
-    hi = max(a or 0, b or 0)
-    return lo, hi
 
 
 def list_models(*, base_url_v1: str, api_key: str, timeout_s: int = 12, provider: str = "") -> List[str]:
@@ -263,47 +219,38 @@ def stream_llm_text(
 
 
 MICRO_LAYERS = [
-    "1. Headers & SSL (Infra)",
-    "2. Vulnerabilidades de Script (Segurança)",
-    "3. Core Web Vitals (Performance)",
-    "4. Render Blocking & Assets (Performance)",
-    "5. Meta-tags & Social (SEO)",
-    "6. Hierarquia & JSON-LD (SEO)",
-    "7. Fricção de UX (Conversão)",
-    "8. Estratégia de Negócio (Econômico)",
-    "9. UX Defensiva & Dark Patterns (SE)",
-    "10. Executive Financial Summary (Financeiro)",
+    "1. Fluxo de Checkout & Pagamento (Risco Imediato)",
+    "2. Sessão & Autenticação de Compradores (Abandono)",
+    "3. Sinais de Confiança TLS/SSL (Atrito antes da Compra)",
+    "4. Velocidade e Core Web Vitals (Queda de Conversão)",
+    "5. Scripts e Componentes Expostos (Risco Operacional)",
+    "6. UX Defensiva e Redirecionamentos (Erosão de Confiança)",
 ]
 
 
 SYSTEM_PROMPT_DEFAULT = (
-    "Você é um Perito Forense Web. Escreva com tom acadêmico, documental e profissional.\\n"
+    "Você é um Agente de Proteção de Receita (Revenue Protection) para E-commerce e SaaS.\\n"
+    "Seu objetivo exclusivo é identificar falhas técnicas no front-end, DOM e headers que causam perda de vendas, atrito e abandono de carrinho.\\n"
     "\\n"
     "REGRA CRÍTICA (anti-hallucination):\\n"
-    "- NÃO invente vulnerabilidades, recursos ausentes ou comportamento.\\n"
-    "- Só reporte uma falha se conseguir PROVAR com um snippet literal do HTML/headers fornecidos.\\n"
+    "- Só reporte um problema se conseguir PROVAR com um snippet literal do HTML/headers fornecidos.\\n"
     "- Se NÃO houver prova literal, NÃO gere linha no CSV.\\n"
-    "- Evite conclusões negativas do tipo \"não existe X\" sem prova direta (ex.: procure o elemento e mostre o snippet que confirma a ausência/condição).\\n"
     "\\n"
-    "QUALIDADE (para parecer premium):\\n"
-    "- Não duplique achados: se um item se repete (ex.: Tailwind CDN / imagens / fontes), consolide em 1 achado com solução completa.\\n"
-    "- Priorize 8–15 achados totais (qualidade > quantidade).\\n"
-    "- Seja específico e executável: diga exatamente o que alterar (header/código), com exemplo mínimo.\\n"
-    "- Em \"Prejuízo\": se não houver base forte, use faixas conservadoras ou \"N/A\" (não chute números absurdos).\\n"
-    "\\n"
-    "CONTEXTO DE UI (importante):\\n"
-    "- Botões \"icon-only\" são aceitáveis se houver aria-label e foco visível; NÃO recomende adicionar texto visível só por gosto.\\n"
+    "FOCO EM NEGÓCIOS:\\n"
+    "- Traduza toda falha técnica para o impacto no comprador. Exemplo: 'Falta HSTS' = 'Sinal de confiança fraco pode assustar clientes antes do checkout'.\\n"
+    "- Não chute valores monetários. No campo 'Mecanismo de Perda', descreva apenas COMO a receita vaza (ex: queda na conversão mobile, carrinho travado).\\n"
+    "- Consolide avisos similares para gerar poucos achados, mas de altíssimo valor.\\n"
     "\\n"
     "Retorne estritamente neste formato:\\n"
     "---REPORT---\\n"
-    "## [Nome da Falha]\\n"
-    "- **Prova:** [Snippet exato do HTML ou header literal]\\n"
-    "- **Por quê:** [Motivo técnico]\\n"
-    "- **Prejuízo:** [Impacto em USD ou N/A]\\n"
-    "- **Solução:** [Como corrigir]\\n"
+    "## [Nome do Risco a Vendas]\\n"
+    "- **Prova:** [Snippet exato do HTML ou header]\\n"
+    "- **Por que custa dinheiro:** [Como afeta o fluxo de compra/usuário]\\n"
+    "- **Mecanismo de Perda:** [Como a conversão cai]\\n"
+    "- **Solução:** [Medida corretiva técnica]\\n"
     "---CSV---\\n"
-    "Categoria;Falha;Prova Técnica;Explicação;Prejuízo Estimado;Solução;Prioridade;Complexity\\n"
-    "[Uma linha por falha, delimitada por ';']\\n"
+    "Categoria;Falha;Prova Técnica;Explicação;Mecanismo;Solução;Prioridade;Complexidade\\n"
+    "[Uma linha por risco identificado, delimitada por ';']\\n"
 )
 
 
@@ -457,10 +404,9 @@ def build_user_prompt(layer: str, fetch: FetchResult, cleaned: str, brief: str =
         f"referrer-policy: {headers_sample.get('referrer-policy')}\n\n"
         f"HTML LIMPO (literal, ATÉ {CLEAN_HTML_TO_LLM_CHARS} chars):\n{cleaned_preview}\n\n"
         "INSTRUÇÕES:\n"
-        "- No CSV, sempre preencha a coluna 'Complexity' com: Baixa, Média ou Alta.\n"
-        "- Não gere itens duplicados (consolide). Priorize poucos itens bons.\n"
-        "- Em 'Prejuízo Estimado', prefira faixas conservadoras ou 'N/A' se não houver base.\n"
-        "- Se o BRIEF DO PRODUTO existir, conecte os achados (principalmente nas camadas 7–9) ao posicionamento premium.\n"
+        "- Extraia SOMENTE riscos que geram atrito no funil de vendas, checkout, confiança do consumidor ou risco grave operacional.\n"
+        "- Prioridades permitidas: Alta, Média, Baixa.\n"
+        "- No CSV, separe os dados com ponto e vírgula (;).\n"
     )
     return "".join(parts)
 
@@ -675,13 +621,3 @@ def call_llm_non_stream(
     except Exception:
         return ""
 
-def estimate_ltv_loss_from_rows(rows: List[str]) -> Tuple[int, int]:
-    """
-    Heuristic range (USD) from priorities in CSV rows.
-    """
-    text = "\n".join(rows).lower()
-    p_hi = text.count(";alta;")
-    p_med = text.count(";média;") + text.count(";media;")
-    p_low = max(0, len(rows) - p_hi - p_med)
-    base = p_hi * 15000 + p_med * 5000 + p_low * 1500
-    return int(base * 0.7), int(base * 1.4)

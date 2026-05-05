@@ -16,7 +16,6 @@ from .services.audit_engine import (
     build_user_prompt,
     call_llm_non_stream,
     clean_html,
-    estimate_ltv_loss_from_rows,
     fetch_url_html,
     parse_usd_range,
     stream_llm_events,
@@ -424,18 +423,7 @@ def run_audit_job(audit_id: str) -> None:
             log(layer, "INFO", f"Iniciando {layer} ({i}/{len(layers)})...")
             md(f"## {layer}")
 
-            # Layer 10 is computed from rows
-            if layer.startswith("10."):
-                lo, hi = estimate_ltv_loss_from_rows(rows)
-                md("### Executive Financial Summary (LTV Loss)")
-                md(f"- Estimativa heurística baseada em prioridades do CSV.")
-                md(f"- **LTV Loss estimado: USD {lo} – {hi}**")
-                md("")
-                fin = f"Financeiro;Executive LTV Loss (heurístico);Derivado do CSV desta auditoria;Faixa estimada por severidade/prioridade;USD {lo}–{hi};Ajustar com métricas reais;Média;Baixa"
-                csv(fin)
-                rows.append(fin)
-                flush(force=True)
-                continue
+
 
             prompt = build_user_prompt(layer, fetch, cleaned, brief=audit_brief)
 
@@ -644,55 +632,7 @@ def run_audit_job(audit_id: str) -> None:
         except Exception:
             pass
 
-        # Add a total "attack cost" estimate from CSV security-related rows (best-effort).
-        try:
-            if rows:
-                lo_sum = 0
-                hi_sum = 0
-                any_hit = False
-                for rr in rows:
-                    parts = [p.strip() for p in (rr or "").split(";")]
-                    if len(parts) < 8:
-                        continue
-                    category = parts[0].lower()
-                    est = parts[4]
-                    is_security = any(
-                        k in category
-                        for k in (
-                            "segurança",
-                            "security",
-                            "headers",
-                            "ssl",
-                            "ux defensiva",
-                            "dark patterns",
-                            "infra",
-                        )
-                    )
-                    if attack_total_mode == "all":
-                        is_security = True
-                    if not is_security:
-                        continue
-                    lo, hi = parse_usd_range(est)
-                    if lo is None or hi is None:
-                        continue
-                    any_hit = True
-                    lo_sum += int(lo)
-                    hi_sum += int(hi)
-                if any_hit and hi_sum > 0:
-                    md("")
-                    md("## Total estimate (attack scenarios)")
-                    md("- Soma heurística das faixas USD dos achados relacionados a segurança/infra.")
-                    md(f"- **Total estimado: USD {lo_sum:,} – {hi_sum:,}**".replace(",", "."))
-                    md("")
-                    total_row = (
-                        "Financeiro;Total attack risk (sum of security ranges);Derivado do CSV desta auditoria;"
-                        "Soma heurística das faixas USD (segurança/infra);"
-                        f"USD {lo_sum}–{hi_sum};Ajustar com dados reais e escopo;Alta;Baixa"
-                    )
-                    csv(total_row)
-                    flush(force=True)
-        except Exception:
-            pass
+
 
         # Optional: Market research benchmarks (CatchAll / Newscatcher)
         try:

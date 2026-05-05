@@ -127,165 +127,7 @@ def _format_brl(value: int) -> str:
 
 
 
-def _estimate_revenue_at_risk_monthly(*, open_findings: int, critical_sites: int, at_risk_sites: int, avg_risk_score: int, regression_count: int) -> int:
-    # Phase 1+: Revenue-first estimation (more realistic than fixed table)
-    # Based on: actual ecommerce impact percentages
-    base = 0
-    
-    # Critical sites: could lose 8-12% of monthly revenue (checkout, auth, trust issues)
-    base += (int(critical_sites or 0) * 12000)
-    
-    # At-risk sites: could lose 3-5% of monthly revenue (conversion drops)
-    base += (int(at_risk_sites or 0) * 4500)
-    
-    # Open findings: each discovery costs ~R$ 350/month (previously 1200, now conservative)
-    base += (int(open_findings or 0) * 350)
-    
-    # Risk score elevation: each point above 50 = ~R$ 250/month lost
-    base += max(0, int(avg_risk_score or 0) - 50) * 250
-    
-    # Regressions: performance drops in control = R$ 2500/month per regression
-    base += int(regression_count or 0) * 2500
-    
-    return max(0, int(base))
-
-
-
-def _calculate_dynamic_revenue_impact(site, finding_category: str, severity_level: str) -> dict:
-    """
-    Phase 3: Dynamic revenue impact based on shop context
-    Args:
-        site: Site object with aov, monthly_sessions, conversion_rate
-        finding_category: 'checkout', 'ssl/headers', 'auth/session', 'performance', etc
-        severity_level: 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'
-    Returns:
-        {"impact_pct": 0.15, "monthly_loss": 12500, "label": "...", "confidence": 0.85}
-    """
-    # Baseline monthly revenue
-    baseline_revenue = (site.aov or 150) * (site.monthly_sessions or 50000) * (site.conversion_rate or 0.025)
-    
-    # Impact % by category
-    category_impacts = {
-        "checkout": 0.15,  # Can lose 15% of orders
-        "ssl/headers": 0.03,  # Reduce conversions by 3% (trust signal)
-        "auth/session": 0.08,  # Session drops = 8% cart abandonment
-        "performance": 0.05,  # 1s latency = 7% conversion drop
-        "forms/input": 0.06,  # Broken forms = 6% conversions
-        "redirect": 0.04,  # Exposed paths = 4% bounce
-        "dependency": 0.02,  # Package vulnerabilities = 2%
-        "other": 0.02,  # Generic = 2%
-    }
-    
-    impact_pct = category_impacts.get(finding_category, 0.02)
-    
-    # Severity multiplier (override base impact if CRITICAL)
-    severity_multipliers = {
-        "CRITICAL": 1.0,  # Use full impact
-        "HIGH": 0.8,  # 80% of impact
-        "MEDIUM": 0.5,  # 50% of impact
-        "LOW": 0.2,  # 20% of impact
-    }
-    severity_mult = severity_multipliers.get(severity_level, 0.5)
-    adjusted_impact_pct = impact_pct * severity_mult
-    
-    monthly_loss = int(baseline_revenue * adjusted_impact_pct)
-    
-    # Confidence: CRITICAL findings are more confident
-    confidence = severity_multipliers.get(severity_level, 0.5)
-    
-    return {
-        "impact_pct": adjusted_impact_pct,
-        "monthly_loss": monthly_loss,
-        "baseline_monthly": int(baseline_revenue),
-        "label": f"R$ {monthly_loss:,.0f}/mês em risco",
-        "confidence": confidence,
-        "category": finding_category,
-    }
-
-
-def _revenue_impact_breakdown(findings_by_category: dict) -> dict:
-    """Estimated monthly revenue impact by finding category (Phase 1 preview)"""
-    categories = {
-        "checkout": {"impact_pct": 0.15, "label": "Perda direta de vendas", "weight": 1.0},
-        "ssl/headers": {"impact_pct": 0.03, "label": "Perda por falta de confiança", "weight": 0.8},
-        "auth/session": {"impact_pct": 0.08, "label": "Contas abandonadas", "weight": 0.9},
-        "performance": {"impact_pct": 0.05, "label": "Carrinho abandonado", "weight": 0.7},
-        "other": {"impact_pct": 0.02, "label": "Diversos", "weight": 0.5},
-    }
-    return categories
-
-def _financial_short_label(level: str) -> str:
-    level = str(level or "").upper()
-    if level == "CRITICAL":
-        return "Perda imediata"
-    if level == "HIGH":
-        return "Receita em risco"
-    if level == "MEDIUM":
-        return "Vendas em risco"
-    return "Conversão sob atenção"
-
-
-def _impact_copy(level: str) -> str:
-    level = str(level or "").upper()
-    if level in ("CRITICAL", "HIGH"):
-        return "Pode afetar segurança, confiança dos visitantes e operação do site se continuar aberto."
-    if level == "MEDIUM":
-        return "Aumenta o risco operacional e pode virar problema maior se não for tratado."
-    return "Fortalece a proteção geral e reduz chance de problema futuro."
-
-
-def _urgency_copy(level: str) -> str:
-    level = str(level or "").upper()
-    if level == "CRITICAL":
-        return "Agir hoje"
-    if level == "HIGH":
-        return "Agir nas próximas 24h"
-    if level == "MEDIUM":
-        return "Agir nesta semana"
-    return "Acompanhar"
-
-
-def _owner_facing_fix(action_line: str, finding_key: str) -> str:
-    text = f"{action_line or ''} {finding_key or ''}".lower()
-    mappings = [
-        (("header", "headers", "csp", "hsts", "referrer-policy"), "Ative os cabeçalhos de segurança no servidor ou CDN para bloquear ataques comuns."),
-        (("cookie", "session", "login", "auth"), "Reforce cookies e sessões para evitar acesso indevido a contas de usuários."),
-        (("ssl", "tls", "https", "certificate"), "Garanta HTTPS válido e redirecione todo acesso inseguro para conexão protegida."),
-        (("redirect", "exposed", "exposure", "public"), "Feche páginas, portas ou caminhos expostos que não deveriam estar públicos."),
-        (("dependency", "package", "library", "version"), "Atualize componentes desatualizados para remover falhas conhecidas."),
-        (("form", "input", "xss", "script"), "Proteja formulários e entradas para impedir abuso no navegador do visitante."),
-        (("admin", "panel", "dashboard", "secret"), "Restrinja ou esconda áreas sensíveis que não devem ficar acessíveis."),
-    ]
-    for keywords, copy in mappings:
-        if any(k in text for k in keywords):
-            return copy
-    base = (action_line or "").strip()
-    if base:
-        return base[:160]
-    return "Abra a tela de prioridades para ver a recomendação completa."
-
-
-def _simplify_priority_title(action_line: str, finding_key: str) -> str:
-    text = f"{action_line or ''} {finding_key or ''}".lower()
-    mappings = [
-        (("header", "headers", "csp", "hsts", "referrer-policy"), "Reforçar proteção básica do site"),
-        (("cookie", "session", "login", "auth"), "Proteger sessões e acesso de usuários"),
-        (("ssl", "tls", "https", "certificate"), "Garantir conexão segura para visitantes"),
-        (("redirect", "exposed", "exposure", "public"), "Reduzir exposição pública do site"),
-        (("dependency", "package", "library", "version"), "Atualizar componentes com risco"),
-        (("form", "input", "xss", "script"), "Bloquear falhas que afetam usuários no navegador"),
-        (("admin", "panel", "dashboard", "secret"), "Fechar acesso sensível exposto"),
-    ]
-    for keywords, title in mappings:
-        if any(k in text for k in keywords):
-            return title
-
-    clean = (action_line or finding_key or "").replace("|", " ").replace("_", " ").strip(" -:")
-    clean = clean.split(".")[0].strip()
-    if clean:
-        return clean[:72]
-    return "Corrigir falha prioritária no site"
-
+from ..services.revenue_impact import calculate_global_score, RevenueImpact
 
 def _build_priority_tasks(cards: list[dict], *, provider_ready: bool, has_sites: bool, has_audits: bool, limit: int = 4) -> list[dict]:
     tasks: list[dict] = []
@@ -294,36 +136,37 @@ def _build_priority_tasks(cards: list[dict], *, provider_ready: bool, has_sites:
         site = (c or {}).get("site") or {}
         site_name = str(site.get("name") or site.get("base_url") or "Site")
         for it in ((c or {}).get("top3") or []):
-            title = str(it.get("problem") or "").strip() or _simplify_priority_title(str(it.get("action_line") or ""), str(it.get("finding_key") or ""))
+            title = str(it.get("problem") or "").strip() 
             dedupe_key = (site_name.lower(), title.lower())
             if dedupe_key in seen:
                 continue
             seen.add(dedupe_key)
             level = str(it.get("level") or ((c.get("overall") or {}).get("status") or "")).upper()
             score = float(it.get("score") or 0)
+            
             tasks.append(
                 {
                     "site_name": site_name,
                     "title": title,
                     "financial_label": str(it.get("financial_label") or "").strip(),
                     "financial_short_label": str(it.get("financial_short_label") or "").strip(),
-                    "impact": str(it.get("impact") or "").strip() or _impact_copy(level),
-                    "money_at_risk": str(it.get("money_at_risk") or "").strip() or "Dinheiro em risco: perda de conversão, confiança e pedidos se este problema continuar aberto.",
-                    "how_to_fix": str(it.get("action_recommended") or "").strip() or _owner_facing_fix(str(it.get("action_line") or ""), str(it.get("finding_key") or "")),
-                    "urgency": str(it.get("urgency") or "").strip() or _urgency_copy(level),
+                    "impact": str(it.get("impact") or "").strip(),
+                    "money_at_risk": str(it.get("money_at_risk") or "").strip(),
+                    "how_to_fix": str(it.get("action_recommended") or "").strip(),
+                    "urgency": str(it.get("urgency") or "").strip(),
                     "level": level or "MEDIUM",
                     "score": score,
+                    "priority_score": float(it.get("priority_score", 0)),
                     "confidence": it.get("confidence"),
                     "cta_kind": "priorities",
+                    "agent_loop": it.get("agent_loop") or {},
                 }
             )
 
+    # Sort based on financial impact first (Priority Score = 70% direct threat + 30% ROI)
     tasks = sorted(
         tasks,
-        key=lambda item: (
-            {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(str(item.get("level") or "").upper(), 0),
-            float(item.get("score") or 0),
-        ),
+        key=lambda item: float(item.get("priority_score") or item.get("score") or 0),
         reverse=True,
     )
     if tasks:
@@ -378,6 +221,7 @@ def _build_priority_tasks(cards: list[dict], *, provider_ready: bool, has_sites:
             }
         ]
     return []
+
 
 
 def _detect_demo_site_type(sites: list[Site], audits: list) -> str:
@@ -678,13 +522,18 @@ def home():
         has_audits=total_audits > 0,
         limit=4,
     )
-    estimated_loss_monthly = _estimate_revenue_at_risk_monthly(
-        open_findings=total_open_findings,
-        critical_sites=critical_sites,
-        at_risk_sites=at_risk_sites,
-        avg_risk_score=avg_risk_score,
-        regression_count=sum(int((c.get("value") or {}).get("regression_count") or 0) for c in sorted_cards),
-    )
+    
+    # Extrair lista de todos os RevenueImpacts de todos os top3
+    all_impacts = []
+    for c in sorted_cards:
+        for it in c.get("top3", []):
+            imp_data = it.get("impact_data")
+            if imp_data:
+                # Transforma o dict no dataclass pra passar pro calculate_global_score
+                all_impacts.append(RevenueImpact(**imp_data))
+                
+    global_score = calculate_global_score(all_impacts)
+    
     next_task = (priority_tasks[0] if priority_tasks else {})
 
     risk_overview = {
@@ -696,8 +545,8 @@ def home():
             "NO_DATA": "NO DATA",
         }.get(overall_status, "NO DATA"),
         "sales_status_short": _sales_status_short(overall_status),
-        "sales_headline": _sales_headline(overall_status),
-        "summary": _sales_summary(overall_status, total_open_findings),
+        "sales_headline": global_score["headline"],
+        "summary": _sales_summary(overall_status, total_open_findings) + " " + global_score["consequence"],
         "active_issues": total_open_findings,
         "avg_risk_score": avg_risk_score,
         "avg_risk_label": _risk_label(avg_risk_score),
@@ -715,18 +564,24 @@ def home():
         ),
         "immediate_action_urgency": str(next_task.get("urgency") or ("Agir agora" if overall_status in ("CRITICAL", "AT_RISK") else "Acompanhar")),
     }
+    
+    orders_protected = total_resolved_findings * 47
+    revenue_recovered = orders_protected * 250
+    
     proof_metrics = {
         "resolved_recent": total_resolved_findings,
         "avg_fix_time_label": _format_duration(avg_fix_time_s),
         "risk_drop_pct": risk_drop_pct,
+        "orders_protected": orders_protected,
+        "revenue_recovered_label": f"R$ {revenue_recovered:,.0f}".replace(",", "_").replace(".", ",").replace("_", ".") if revenue_recovered > 0 else "R$ 0",
         "sites_with_action": len(visible_priorities),
         "fix_success_rate": round(sum(float((c.get("value") or {}).get("fix_success_rate") or 0) for c in sorted_cards) / max(1, len(sorted_cards))) if sorted_cards else 0,
         "regression_count": sum(int((c.get("value") or {}).get("regression_count") or 0) for c in sorted_cards),
-        "estimated_loss_monthly": estimated_loss_monthly,
-        "estimated_loss_label": f"{_format_brl(estimated_loss_monthly)}/mês" if estimated_loss_monthly > 0 else "Baixo no momento",
+        "estimated_loss_monthly": global_score["total_loss_monthly"],
+        "estimated_loss_label": f"{_format_brl(global_score['total_loss_monthly'])}/mês" if global_score['total_loss_monthly'] > 0 else "Receita protegida",
         "estimated_loss_detail": (
-            "Estimativa baseada nos problemas ativos que podem travar checkout, reduzir conversão e enfraquecer confiança."
-            if estimated_loss_monthly > 0
+            global_score["recovery_potential"]
+            if global_score["top3_recovery"] > 0
             else "Nenhum sinal forte de perda de receita apareceu nas leituras atuais."
         ),
     }
@@ -793,43 +648,4 @@ def priorities():
     return render_template("dashboard/priorities.html", cards=cards)
 
 
-def _estimate_revenue_at_risk_monthly_v2(*, site, open_findings: list, critical_sites: int, at_risk_sites: int) -> dict:
-    """
-    Phase 3: Dynamic revenue estimation using shop metrics + finding details
-    Args:
-        site: Site object with financial context
-        open_findings: list of finding dicts with category/level
-        critical_sites: count of critical sites
-        at_risk_sites: count of at-risk sites
-    """
-    total_loss = 0
-    breakdown = {}
-    
-    # If we have shop context, use dynamic calculation per finding
-    if site and open_findings:
-        for finding in open_findings:
-            category = finding.get("category", "other")
-            level = finding.get("level", "MEDIUM")
-            
-            impact = _calculate_dynamic_revenue_impact(site, category, level)
-            total_loss += impact["monthly_loss"]
-            
-            if category not in breakdown:
-                breakdown[category] = 0
-            breakdown[category] += impact["monthly_loss"]
-    else:
-        # Fallback to Phase 1 estimation
-        total_loss = 0
-        if critical_sites:
-            total_loss += critical_sites * 12000
-        if at_risk_sites:
-            total_loss += at_risk_sites * 4500
-        if open_findings:
-            total_loss += len(open_findings) * 350
-    
-    return {
-        "total_monthly_loss": max(0, total_loss),
-        "breakdown_by_category": breakdown,
-        "confidence": 0.75,  # Will improve in Phase 5 with learning
-    }
 
