@@ -21,21 +21,35 @@ def parse_csv_findings(csv_text: str) -> List[Finding]:
         parts = [p.strip() for p in row.split(";")]
         if len(parts) < 2:
             continue
-        while len(parts) < 8:
-            parts.append("")
-        category, failure, proof, explanation, loss, solution, priority, complexity = parts[:8]
-        key = (category.lower() + "|" + failure.lower()).strip()
+            
+        # Suporte a 8 colunas (v1) e 9 colunas (Fase 2.5)
+        if len(parts) >= 9:
+            # Novo formato: Categoria;Technical_Type;Título;Prova;Explicação;Mecanismo;Solução;Prioridade;Complexidade
+            cat, ttype, title, proof, expl, loss, sol, prio, compl = parts[:9]
+        else:
+            # Formato antigo: Categoria;Título;Prova;Explicação;Mecanismo;Solução;Prioridade;Complexidade
+            while len(parts) < 8:
+                parts.append("")
+            cat, title, proof, expl, loss, sol, prio, compl = parts[:8]
+            ttype = "legacy_finding"
+
+        # Key única baseada no tipo técnico para estabilidade
+        key = (cat.lower() + "|" + ttype.lower()).strip()
+        if ttype == "legacy_finding":
+            key = (cat.lower() + "|" + title.lower()).strip()
+
         findings.append(
             Finding(
                 key=key,
-                category=category,
-                failure=failure,
+                category=cat,
+                technical_type=ttype,
+                failure=title,  # O título comercial do prompt agora entra como 'failure'
                 proof=proof,
-                explanation=explanation,
+                explanation=expl,
                 loss=loss,
-                solution=solution,
-                priority=priority,
-                complexity=complexity,
+                solution=sol,
+                priority=prio,
+                complexity=compl,
             )
         )
     return findings
@@ -57,7 +71,7 @@ def _priority_severity(priority: str) -> int:
 def score_finding(f: Finding, *, recurrence_count: int = 1, shop: ShopContext | None = None) -> Dict:
     severity = _priority_severity(f.priority)
     
-    # Calculate real revenue impact
+    # Calculate real revenue impact (Passando technical_type da Fase 2.5)
     impact: RevenueImpact = calculate_revenue_impact(
         f.key,
         category=f.category,
@@ -65,6 +79,7 @@ def score_finding(f: Finding, *, recurrence_count: int = 1, shop: ShopContext | 
         solution=f.solution,
         severity_level=f.priority,
         shop=shop,
+        technical_type=f.technical_type,
     )
     
     # Action recommendation
@@ -80,11 +95,36 @@ def score_finding(f: Finding, *, recurrence_count: int = 1, shop: ShopContext | 
     if evidence:
         rec = rec + " Evidência técnica: " + evidence[:220]
 
+    # Encapsulamento de 3 Camadas (Fase 2.5)
+    # 🔒 technical: sinal técnico puro e debug
+    # 💰 business: narrativa WOW e impacto financeiro
+    # 🧠 explanation: detalhamento do mecanismo de falha
+    
+    technical = {
+        "type": f.technical_type,
+        "category": f.category,
+        "raw_evidence": f.proof,
+    }
+    
+    business = {
+        "title": f.failure, # O Título ⚠️ Antes/Depois do LLM
+        "impact": f.explanation[:160], # Resumo do impacto no cliente
+        "money_loss": f"R$ {int(impact.revenue_at_risk_24h):,.0f}".replace(",", "."),
+        "urgency": urgency,
+    }
+    
+    explanation = {
+        "what_is_happening": f.explanation,
+        "why_it_matters": f.loss,
+        "solution": rec,
+    }
+
     return {
         "key": f.key,
         "category": f.category,
-        "failure": f.failure,
-        "loss": f.loss,
+        "technical": technical,
+        "business": business,
+        "explanation": explanation,
         "priority_raw": f.priority,
         "complexity": f.complexity,
         "severity_base": severity,
@@ -92,7 +132,7 @@ def score_finding(f: Finding, *, recurrence_count: int = 1, shop: ShopContext | 
         "score": 0, # Computed in build_decision_report
         "level": "MEDIUM", # Computed in build_decision_report
         "recommendation": rec,
-        "impact_data": impact,
+        "impact_data": impact, # Mantemos como OBJETO para processamento no loop posterior
     }
 
 
@@ -235,9 +275,16 @@ def build_decision_report(
     items.sort(key=lambda x: x["impact_data"].priority_score, reverse=True)
     
     # Remover o objeto RevenueImpact puro antes de serializar (para evitar falhas no json.dumps)
+    # E achatar campos para compatibilidade com Dashboard UI antiga
     for it in items:
-        if "impact_data" in it:
-            it["impact_data"] = it["impact_data"].to_dict()
+        # Camada de Compatibilidade (UI consome ecommerce.problema etc)
+        imp_obj = it["impact_data"]
+        it["impact_data"] = imp_obj.to_dict()
+        
+        # Flatten para compatibilidade Legada
+        it["failure"] = it["business"]["title"]
+        it["explanation"] = it["explanation"]["what_is_happening"]
+        it["loss"] = it["explanation"]["why_it_matters"]
 
     top = items[:top_n]
 

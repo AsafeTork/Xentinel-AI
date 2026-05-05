@@ -15,6 +15,7 @@ Fallbacks quando o usuário não fornece dados:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -179,23 +180,43 @@ class RevenueImpact:
     # Recuperação estimada
     recovery_label: str = ""
 
+    @property
+    def loss_min_24h(self) -> float:
+        # Variância inversamente proporcional à confiança (Fase 8)
+        # Confidence 0.90 -> variance 10%
+        variance = max(0.1, 1.0 - self.confidence)
+        return self.revenue_at_risk_24h * (1.0 - (variance * 0.8))
+
+    @property
+    def loss_max_24h(self) -> float:
+        variance = max(0.1, 1.0 - self.confidence)
+        # Multiplicador levemente maior para o teto (pessimista)
+        return self.revenue_at_risk_24h * (1.0 + (variance * 1.2))
+
+    @property
+    def loss_range_formatted(self) -> str:
+        def _f(v): return f"{int(v):,.0f}".replace(",", ".")
+        return f"R$ {_f(self.loss_min_24h)} — {_f(self.loss_max_24h)}"
+
     def to_dict(self) -> dict:
         return {
-            "category": self.category,
+            "revenue_at_risk_per_hour": self.revenue_at_risk_per_hour,
+            "revenue_at_risk_24h": self.revenue_at_risk_24h,
+            "revenue_at_risk_monthly": self.revenue_at_risk_monthly,
+            "loss_range": self.loss_range_formatted,
+            "loss_min": self.loss_min_24h,
+            "loss_max": self.loss_max_24h,
+            "conversion_loss_pct": self.conversion_loss_pct,
             "affected_sessions": self.affected_sessions,
-            "conversion_rate": round(self.conversion_rate, 4),
-            "avg_order_value": round(self.avg_order_value, 2),
-            "conversion_loss_pct": round(self.conversion_loss_pct, 4),
-            "revenue_at_risk_per_hour": round(self.revenue_at_risk_per_hour, 2),
-            "revenue_at_risk_24h": round(self.revenue_at_risk_24h, 2),
-            "revenue_at_risk_monthly": round(self.revenue_at_risk_monthly, 2),
-            "confidence": round(self.confidence, 3),
+            "conversion_rate": self.conversion_rate,
+            "avg_order_value": self.avg_order_value,
+            "confidence": self.confidence,
+            "priority_score": self.priority_score,
+            "roi_score": self.roi_score,
             "risk_of_action": self.risk_of_action,
             "blast_radius": self.blast_radius,
             "reversibility": self.reversibility,
             "fix_effort_hours": self.fix_effort_hours,
-            "roi_score": round(self.roi_score, 2),
-            "priority_score": round(self.priority_score, 2),
             "narrative": self.narrative,
             "consequence_24h": self.consequence_24h,
             "recovery_label": self.recovery_label,
@@ -208,8 +229,16 @@ def _format_brl(value: float) -> str:
     return f"R$ {text}"
 
 
-def classify_finding_category(finding_key: str, category: str = "", failure: str = "", solution: str = "") -> str:
+def classify_finding_category(finding_key: str, category: str = "", failure: str = "", solution: str = "", technical_type: str = "") -> str:
     """Classifica um finding em uma categoria de impacto financeiro."""
+    # Prioridade 1: Technical Type (ID estável do LLM Fase 2.5)
+    t = (technical_type or "").lower()
+    if any(k in t for k in ("checkout", "payment", "cart", "gateway")): return "checkout"
+    if any(k in t for k in ("ssl", "tls", "https", "hsts", "csp", "header")): return "ssl_headers"
+    if any(k in t for k in ("session", "login", "auth", "jwt", "cookie")): return "session_auth"
+    if any(k in t for k in ("perf", "speed", "lcp", "cls", "fcp")): return "performance"
+    
+    # Prioridade 2: Keywords no texto (Fallback legível)
     text = " ".join([finding_key or "", category or "", failure or "", solution or ""]).lower()
 
     if any(k in text for k in ("checkout", "payment", "gateway", "cart", "pedido", "compra")):
@@ -237,18 +266,19 @@ def calculate_revenue_impact(
     solution: str = "",
     severity_level: str = "MEDIUM",
     shop: ShopContext | None = None,
+    technical_type: str = "",
 ) -> RevenueImpact:
     """
     Calcula impacto financeiro de um finding.
 
     Fórmula:
-        revenue_at_risk_per_hour = affected_sessions × conversion_rate × AOV × conversion_loss_pct
+        revenue_at_risk_per_hour = affected_sessions × conversion_rate × AOV × conversion_loss_pct × confidence
         prioridade (ROI) = revenue_at_risk_monthly / fix_effort_hours
     """
     if shop is None:
         shop = ShopContext()
 
-    impact_category = classify_finding_category(finding_key, category, failure, solution)
+    impact_category = classify_finding_category(finding_key, category, failure, solution, technical_type)
     impact_data = CATEGORY_IMPACT.get(impact_category, CATEGORY_IMPACT["generic"])
 
     # Severity multiplier: CRITICAL usa 100% do impacto, LOW usa 25%

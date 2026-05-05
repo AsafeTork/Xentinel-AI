@@ -234,14 +234,15 @@ def generate_action_block(f: Finding) -> Dict:
         )
 
     action["agent_loop"] = {
-        "detect": f.category or "Análise",
+        "detect": f.category or "Anomalia Identificada",
         "investigate": (f.explanation or action.get("title", "")).strip(),
-        "recommend": action.get("title", action.get("recommendation", "Correção necessária")),
+        "recommend": action.get("title", action.get("recommendation", "Correção prioritária")),
         "mock_execute": {
             "language": action.get("snippet_language", "text"),
-            "snippet": action.get("snippet", "Nenhuma automação extraída.")
+            "label": "Simulação de Correção",
+            "snippet": action.get("snippet", "Processando correção...")
         },
-        "impact": "Prevenção de abandono de sessão e perda de confiança."
+        "impact": "Prevenção ativa de abandono de sessão e proteção de receita."
     }
 
     return action

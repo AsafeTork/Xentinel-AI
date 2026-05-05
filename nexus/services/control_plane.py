@@ -254,8 +254,8 @@ def build_agent_cards(org_id: str, *, limit: int = 200) -> List[Dict[str, Any]]:
                     "financial_short_label": ecommerce.get("severidade_financeira_curta") or "",
                     "financial_summary": ecommerce.get("resumo_financeiro") or "",
                     "problem": ecommerce.get("problema") or it.get("failure") or "",
-                    "impact": ecommerce.get("impacto") or "",
-                    "money_at_risk": ecommerce.get("dinheiro_em_risco") or "",
+                    "impact": it.get("impact_data", {}).get("loss_range") or ecommerce.get("impacto") or "",
+                    "money_at_risk": it.get("impact_data", {}).get("loss_range") or ecommerce.get("dinheiro_em_risco") or "",
                     "urgency": ecommerce.get("urgencia") or "",
                     "action_recommended": ecommerce.get("acao_recomendada") or _summ_action_line(it),
                     "safety_gate": {
@@ -264,7 +264,10 @@ def build_agent_cards(org_id: str, *, limit: int = 200) -> List[Dict[str, Any]]:
                     },
                     "action_line": _summ_action_line(it),
                     "impact_data": it.get("impact_data") or {},
-                    "agent_loop": it.get("action", {}).get("agent_loop", {})
+                    "agent_loop": it.get("action", {}).get("agent_loop", {}),
+                    "technical": it.get("technical") or {},
+                    "business": it.get("business") or {},
+                    "explanation": it.get("explanation") or {},
                 }
             )
 
