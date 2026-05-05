@@ -1,13 +1,27 @@
-# SaaS (rebrandable)
+# Xentinel AI
 
-Este pacote é um **SaaS profissional** (multi-tenant) rebrandable via `APP_NAME`:
-- Login + Organização (tenant)
-- Sites + Auditorias (histórico)
-- Worker assíncrono via **Redis + RQ**
-- LLM via **gateway OpenAI-compatible** (Eclipse Provider funciona)
-- Billing via **Stripe** (Checkout + Webhook)
+**Revenue Protection System para e-commerce.**
 
-## Rodar local (modo fácil com Docker)
+O produto foi reposicionado para responder três perguntas:
+- sua loja está perdendo vendas agora?
+- quanto isso pode custar?
+- o que corrigir primeiro para proteger checkout, conversão, confiança e receita?
+
+Hoje a base já entrega:
+- dashboard comercial orientado a perda de vendas
+- priorização automática por impacto financeiro
+- demo state convincente para e-commerce
+- motor de impacto de receita (`revenue_impact.py`)
+- auditorias, filas, histórico e monitoramento contínuo
+- worker assíncrono com Redis + RQ
+- integração com LLM via gateway OpenAI-compatible
+- billing via Stripe
+
+## Posicionamento
+
+**Plataforma que mostra onde seu e-commerce pode estar perdendo dinheiro e o que corrigir primeiro para recuperar vendas.**
+
+## Rodar local
 1) Copie `.env.example` para `.env` e preencha as chaves
 2) Suba:
 ```bash
@@ -24,7 +38,7 @@ docker compose exec web flask db upgrade
 > Dica: se o comando `flask` não reconhecer o app, rode com:
 > `docker compose exec -e FLASK_APP=app.py web flask db upgrade`
 
-## Deploy “mais fácil e melhor”
+## Deploy
 ### Opção A (recomendada): Railway/Render
 - Postgres gerenciado
 - Redis gerenciado
@@ -91,7 +105,7 @@ Regras hard:
 - Use `docker compose`
 - Nginx como reverse proxy (TLS via LetsEncrypt)
 
-## “Teste completo”
+## Teste completo
 - Testes automatizados com `pytest` (ver pasta `tests/`)
 - Smoke test manual:
   1) Criar conta
@@ -108,13 +122,14 @@ O sistema usa **OpenAI-compatible**:
 Se o provedor não tiver `/models`, use um proxy como **LiteLLM** e aponte o Base URL para o proxy:
 `http://127.0.0.1:4000/v1`
 
-## Como “colocar no mercado” (guia rápido)
+## Como colocar no mercado
 1) **Domínio**: compre um domínio e aponte para o Render/VPS
-2) **Termos/Privacidade**: crie páginas e políticas (mínimo para SaaS)
+2) **Posicionamento**: venda como proteção de receita para e-commerce, não como scanner técnico
 3) **Stripe**:
-   - crie um Product + Price (mensal)
+   - crie um Product + Price mensal
    - copie o `price_id` para `STRIPE_PRICE_ID`
    - configure o webhook apontando para `/billing/webhook`
 4) **Onboarding**:
-   - crie um “site demo”
-   - faça um vídeo curto (2–3 min) mostrando: add site → start audit → dossiê → export
+   - cadastre uma loja demo
+   - deixe o demo state ativo para primeira impressão forte
+   - mostre o fluxo: loja em risco → dinheiro em risco → correção prioritária

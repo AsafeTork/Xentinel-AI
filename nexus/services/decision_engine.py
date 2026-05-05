@@ -95,6 +95,16 @@ def score_finding(f: Finding, *, recurrence_count: int = 1, shop: ShopContext | 
     if evidence:
         rec = rec + " Evidência técnica: " + evidence[:220]
 
+    loss_24h = float(getattr(impact, "revenue_at_risk_24h", 0) or 0)
+    if loss_24h >= 2500:
+        urgency = "Agir agora"
+    elif loss_24h >= 800:
+        urgency = "Próximas 24h"
+    elif loss_24h > 0:
+        urgency = "Esta semana"
+    else:
+        urgency = "Monitorar"
+
     # Encapsulamento de 3 Camadas (Fase 2.5)
     # 🔒 technical: sinal técnico puro e debug
     # 💰 business: narrativa WOW e impacto financeiro
