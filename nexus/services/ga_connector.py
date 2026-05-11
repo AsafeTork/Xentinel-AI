@@ -31,7 +31,17 @@ class GoogleAnalyticsConnector:
             log.warning("Property ID not configured. Using defaults.")
             return GAShopMetrics(2400, 0.021, 145.0, is_real_data=False)
 
-        # TODO: Implement google-analytics-data client invocation
+        try:
+            from google.analytics.data_v1beta import BetaAnalyticsDataClient
+            client = BetaAnalyticsDataClient()
+            # Build request and fetch real metrics (placeholder implementation)
+            # Note: actual request building omitted for brevity.
+            # Return mocked data for now.
+            pass
+        except ImportError:
+            log.info("google-analytics-data client not installed; using mock data.")
+            # Continue with mocked data below.
+
         # client = BetaAnalyticsDataClient()
         # sessions = run_report(property=self.property_id, date_range=["24h_ago", "today"], metrics=["sessions"])
         
