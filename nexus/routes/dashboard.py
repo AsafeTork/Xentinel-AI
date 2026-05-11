@@ -110,6 +110,7 @@ def _sales_headline(status: str) -> str:
 
 
 def _sales_summary(status: str, active_issues: int) -> str:
+    # existing function body unchanged
     status = str(status or "").upper()
     if status == "CRITICAL":
         return "Problemas ativos podem interromper checkout, reduzir conversão e derrubar receita imediatamente."
@@ -121,9 +122,24 @@ def _sales_summary(status: str, active_issues: int) -> str:
 
 
 def _format_brl(value: int) -> str:
+    """Format integer as Brazilian Real currency string.
+    Ensures non-negative values and uses comma as decimal separator.
+    """
     value = int(max(0, int(value or 0)))
     text = f"{value:,.0f}".replace(",", "_").replace(".", ",").replace("_", ".")
     return f"R$ {text}"
+
+def _financial_short_label(level: str) -> str:
+    """Return a concise label for financial risk levels.
+    Maps known levels to short uppercase strings; unknown levels are returned unchanged.
+    """
+    level = (level or "").upper()
+    return {
+        "CRITICAL": "CRIT",
+        "HIGH": "HIGH",
+        "MEDIUM": "MED",
+        "LOW": "LOW",
+    }.get(level, level)
 
 
 

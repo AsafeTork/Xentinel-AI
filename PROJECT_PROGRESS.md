@@ -1,0 +1,3 @@
+- Updated tests/conftest.py to use in-memory SQLite (sqlite:///:memory:) for isolated test database.
+- All tests now pass (3 passed).
+- Commit created to reflect fix.
