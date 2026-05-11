@@ -290,11 +290,15 @@ def build_decision_report(
         # Camada de Compatibilidade (UI consome ecommerce.problema etc)
         imp_obj = it["impact_data"]
         it["impact_data"] = imp_obj.to_dict()
-        
+
         # Flatten para compatibilidade Legada
         it["failure"] = it["business"]["title"]
-        it["explanation"] = it["explanation"]["what_is_happening"]
-        it["loss"] = it["explanation"]["why_it_matters"]
+        # Preserve original explanation dict
+        expl_dict = it.get("explanation", {})
+        it["explanation_text"] = expl_dict.get("what_is_happening", "")
+        it["loss"] = expl_dict.get("why_it_matters", "")
+        # Keep backward compatible key "explanation" as plain text
+        it["explanation"] = it["explanation_text"]
 
     top = items[:top_n]
 
